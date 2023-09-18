@@ -1,6 +1,6 @@
 --Datos a guardar en la base de datos
 CREATE TABLE sfparevalo_coderhouse.earthquake (
-    id VARCHAR(10),
+    id INTEGER primary key,
     state_earthquake INTEGER,
     utc_time TIMESTAMP,
     reference VARCHAR(255),
