@@ -1,0 +1,5 @@
+requests
+load_dotenv
+psycopg2
+pandas
+datetime
