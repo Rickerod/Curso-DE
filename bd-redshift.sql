@@ -9,4 +9,4 @@ CREATE TABLE sfparevalo_coderhouse.earthquake (
     latitude DECIMAL(8, 4),
     longitude DECIMAL(8, 4),
     depth_earthquake DECIMAL(8, 2)
-);
+) DISTSTYLE ALL SORTKEY (utc_time);

@@ -55,7 +55,7 @@ with conn.cursor() as cur:
             latitude DECIMAL(8, 4),
             longitude DECIMAL(8, 4),
             depth_earthquake DECIMAL(8, 2)
-        );
+        ) DISTSTYLE EVEN SORTKEY (utc_time);
     """)
     conn.commit()
     
