@@ -4,14 +4,19 @@ import psycopg2
 import pandas as pd
 from psycopg2.extras import execute_values
 from airflow.models import Variable
+import smtplib
+from email.mime.text import MIMEText
 
 #-------------------- 
 url = "data-engineer-cluster.cyhh5bfevlmn.us-east-1.redshift.amazonaws.com"
 data_base = "data-engineer-database"
 port = "5439"
 
-user=Variable.get("user_redshift")
+user= Variable.get("user_redshift")
 pwd= Variable.get("secret_pass_redshift")
+
+email_user = Variable.get("email_user")
+email_pass = Variable.get("email_pass")
 
 
 def conectar_Redshift():
@@ -45,15 +50,21 @@ def conectar_Redshift():
             )  DISTSTYLE EVEN SORTKEY (utc_time);
         """)
         conn.commit()
-    
-    #Vaciar la tabla para evitar duplicados o inconsistencias
-    with conn.cursor() as cur:
-        cur.execute("Truncate table earthquake")
-        count = cur.rowcount
-    cur.close()
-    conn.close()
+        
+def send_email(ti):
+    if(ti.xcom_pull(key="earthquakes5")):
+        msg = MIMEText(ti.xcom_pull(key="body"))
+        msg['Subject'] = "Ultimos sismos - Magnitudes mayor a 5, escala richter"
+        msg['From'] = email_user
+        msg['To'] = ', '.join([email_user])
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp_server:
+            smtp_server.login(email_user, email_pass)
+            smtp_server.sendmail(email_user, [email_user], msg.as_string())
+        print("Message sent!")
+    else:
+        print("No hubieron sismos mayores a 5 grados en la escala de richter")
 
-def insert_data():
+def insert_data(ti):
 
     def get_earthquakes():
         response_API = requests.get("https://chilealerta.com/api/query/?user=demo&select=ultimos_sismos&limit=100&country=Chile")
@@ -63,24 +74,6 @@ def insert_data():
         ultimos_sismos = ultimos_sismos['ultimos_sismos_Chile']
 
         return ultimos_sismos
-
-    def transform_data():
-        df = pd.DataFrame(get_earthquakes())
-        #Eliminar elementos duplicados
-        df.drop_duplicates(subset=['id'], inplace=True)
-        
-        #Transformar el campo fecha a tipo fecha.
-        df['utc_time']= pd.to_datetime(df['utc_time'], format='%Y/%m/%d %H:%M:%S')
-        
-        # Eliminar registros que posean valores nulos 
-        df = df.dropna(how='any',axis=0)
-        
-        #Considerar datos que se van a guardar en la base de datos.
-        df = df[['id', 'state', 'utc_time', 'reference', 'magnitude', 'scale', 'latitude', 'longitude', 'depth']]
-
-        return df 
-
-    df = transform_data()
 
     #Conexion redshift
     try:
@@ -94,6 +87,59 @@ def insert_data():
         
     except Exception as e:
         print("¡Conexión invalida!", e)
+
+    #Consultar la ultima fecha del ultimo sismo registrado en la base de datos.
+    with conn.cursor() as cur:
+        cur.execute('''
+            SELECT utc_time
+            FROM earthquake
+            ORDER BY utc_time DESC
+            LIMIT 1;
+            ''')
+        ultima_fecha = cur.fetchone()
+        
+        #Si no existen registros en la base de datos
+        if ultima_fecha is None: 
+            ultima_fecha = pd.Timestamp.min #Fecha mas baja tipo Timestamp.
+        else:
+            ultima_fecha = ultima_fecha[0]
+
+    def transform_data(ultima_fecha):
+        df = pd.DataFrame(get_earthquakes())
+        #Eliminar elementos duplicados
+        df.drop_duplicates(subset=['id'], inplace=True)
+        
+        #Transformar el campo fecha a tipo fecha.
+        df['utc_time']= pd.to_datetime(df['utc_time'], format='%Y/%m/%d %H:%M:%S')
+        
+        # Eliminar registros que posean valores nulos 
+        df = df.dropna(how='any',axis=0)
+        
+        #Considerar datos que se van a guardar en la base de datos.
+        df = df[['id', 'state', 'utc_time', 'reference', 'magnitude', 'scale', 'latitude', 'longitude', 'depth']]
+
+        #Considerar solo los sismos de la ultima fecha registrada en la base de datos, para evitar duplicados
+        df = df[df['utc_time'] > ultima_fecha]
+
+        return df 
+
+    df = transform_data(ultima_fecha)
+
+    #Filtrar para los sismos con una magnitud mayor a 5 grados escala richter.
+    df_magnitude = df[df['magnitude'] > 5]
+
+    #En el caso de que exista algun registro de un sismo con una magnitud mayor a 5, se envia el correo.
+    if(df_magnitude.shape[0] > 0):
+        sismos_string = ""
+        for index, row in df_magnitude.iterrows():  
+            sismos_string += f"Fecha: {row['utc_time']} UTC, Lugar: {row['reference']}, Magnitud: {row['magnitude']} grados escala richter\n"
+        body = sismos_string
+
+        #send_email(subject, body, sender, recipients, password)
+        ti.xcom_push(key="earthquakes5", value=True)
+        ti.xcom_push(key="body", value=body)
+    else:
+        ti.xcom_push(key="earthquakes5", value=False)
 
     #Insertando los datos en Redsfhift
     with conn.cursor() as cur:

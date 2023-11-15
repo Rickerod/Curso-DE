@@ -3,7 +3,7 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.python_operator import PythonOperator
 
-from Earthquake_ETL import conectar_Redshift, insert_data 
+from Earthquake_ETL import conectar_Redshift, insert_data, send_email
 
 default_args={
     'owner': 'SergioP',
@@ -35,9 +35,14 @@ with DAG(
         python_callable=insert_data,
     )
 
-    task4 = BashOperator(
+    task4 = PythonOperator(
+        task_id='send_email',
+        python_callable=send_email,
+    )
+
+    task5 = BashOperator(
         task_id= 'completado',
         bash_command='echo Proceso completado...'
     )
     
-    task1 >> task2 >> task3 >> task4
+    task1 >> task2 >> task3 >> task4 >> task5
