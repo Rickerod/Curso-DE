@@ -4,8 +4,6 @@ import psycopg2
 import pandas as pd
 from psycopg2.extras import execute_values
 from airflow.models import Variable
-import smtplib
-from email.mime.text import MIMEText
 
 #-------------------- 
 url = "data-engineer-cluster.cyhh5bfevlmn.us-east-1.redshift.amazonaws.com"
@@ -15,11 +13,8 @@ port = "5439"
 user= Variable.get("user_redshift")
 pwd= Variable.get("secret_pass_redshift")
 
-email_user = Variable.get("email_user")
-email_pass = Variable.get("email_pass")
 
-
-def conectar_Redshift():
+def conectar_redshift():
     #Creando la conexión a Redsshift
     try:
         conn = psycopg2.connect(
@@ -51,19 +46,6 @@ def conectar_Redshift():
         """)
         conn.commit()
         
-def send_email(ti):
-    if(ti.xcom_pull(key="earthquakes5")):
-        msg = MIMEText(ti.xcom_pull(key="body"))
-        msg['Subject'] = "Ultimos sismos - Magnitudes mayor a 5, escala richter"
-        msg['From'] = email_user
-        msg['To'] = ', '.join([email_user])
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp_server:
-            smtp_server.login(email_user, email_pass)
-            smtp_server.sendmail(email_user, [email_user], msg.as_string())
-        print("Message sent!")
-    else:
-        print("No hubieron sismos mayores a 5 grados en la escala de richter")
-
 def insert_data(ti):
 
     def get_earthquakes():
@@ -125,8 +107,9 @@ def insert_data(ti):
 
     df = transform_data(ultima_fecha)
 
-    #Filtrar para los sismos con una magnitud mayor a 5 grados escala richter.
-    df_magnitude = df[df['magnitude'] > 5]
+    #Filtrar para los sismos con una magnitud mayor al grado que se define en escala richter.
+    magnitude = ti.xcom_pull(key="magnitude_earthquake")
+    df_magnitude = df[df['magnitude'] > magnitude]
 
     #En el caso de que exista algun registro de un sismo con una magnitud mayor a 5, se envia el correo.
     if(df_magnitude.shape[0] > 0):
@@ -136,10 +119,10 @@ def insert_data(ti):
         body = sismos_string
 
         #send_email(subject, body, sender, recipients, password)
-        ti.xcom_push(key="earthquakes5", value=True)
+        ti.xcom_push(key="earthquakes", value=True)
         ti.xcom_push(key="body", value=body)
     else:
-        ti.xcom_push(key="earthquakes5", value=False)
+        ti.xcom_push(key="earthquakes", value=False)
 
     #Insertando los datos en Redsfhift
     with conn.cursor() as cur:
